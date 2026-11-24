@@ -13,7 +13,7 @@ TEMPLATE = ('مساء الخير يا فندم، مع حضرتك [اسمك]، م
 
 class App:
     def __init__(self,root,store):
-        self.root=root; self.s=store; self.selected=None; self.opened=None; self.queue_ids=[]; self.queue_done=set(); self.queue_skipped=set(); self.queue_current=None; self.queue_template=""
+        self.root=root; self.s=store; self.selected=None; self.opened=None; self.queue_ids=[]; self.queue_done=set(); self.queue_skipped=set(); self.queue_current=None; self.queue_template=""; self.queue_opened=None
         root.title('LeadConnect Pro | Local Sales Workspace'); root.geometry('1350x850'); root.minsize(1000,650); root.configure(bg='#101827')
         style=ttk.Style(root); style.theme_use('clam')
         style.configure('.',background='#101827',foreground='#e2e8f0',font=('Segoe UI',10))
@@ -154,8 +154,8 @@ class App:
         self.queue_preview.config(state='disabled')
         self.queue_open_button.config(state='normal' if row else 'disabled')
         self.queue_skip_button.config(state='normal' if row else 'disabled')
-        self.queue_invalid_button.config(state='normal' if row and self.opened and self.opened[0]==row['id'] else 'disabled')
-        self.queue_sent_button.config(state='normal' if row and self.opened and self.opened[0]==row['id'] else 'disabled')
+        self.queue_invalid_button.config(state='normal' if row and self.queue_opened and self.queue_opened[0]==row['id'] else 'disabled')
+        self.queue_sent_button.config(state='normal' if row and self.queue_opened and self.queue_opened[0]==row['id'] else 'disabled')
     def queue_message(self,row):
         return self.queue_template.replace('{business}',row['name']).replace('{area}',row['area'])
     def queue_open(self):
@@ -166,25 +166,28 @@ class App:
         if not text or len(text)>1500:
             messagebox.showwarning('Message','Personalized message exceeds 1,500 characters. Skip or change the template.');return
         if webbrowser.open('https://web.whatsapp.com/send?'+urlencode({'phone':row['phone'],'text':text})):
-            self.opened=(row['id'],text);self.queue_render()
+            self.queue_opened=(row['id'],text);self.queue_render()
             self.footer.config(text='Review the recipient in WhatsApp and press Send yourself.')
         else:messagebox.showerror('Browser','Unable to open WhatsApp Web.')
     def queue_sent(self):
         cid=self.queue_current
-        if cid is None or not self.opened or self.opened[0]!=cid:return
+        if cid is None or not self.queue_opened or self.queue_opened[0]!=cid:return
         if not messagebox.askyesno('Confirm actual send','Did you press Send and see the outgoing message in the correct WhatsApp chat?'):return
-        try:self.s.event(cid,'Sent',self.opened[1])
+        row=self.s.get(cid)
+        if not eligible(row) or row['sent'] or row['status']!='New':
+            messagebox.showwarning('Not eligible','Contact changed or already sent. Skip to continue.');return
+        try:self.s.event(cid,'Sent',self.queue_opened[1])
         except ValueError as e:messagebox.showerror('Could not record',str(e));return
-        self.queue_done.add(cid);self.queue_current=None;self.opened=None
+        self.queue_done.add(cid);self.queue_current=None;self.queue_opened=None
         self.refresh();self.queue_next()
     def queue_skip(self,unavailable):
         cid=self.queue_current
         if cid is None:return
         if unavailable:
-            if not self.opened or self.opened[0]!=cid:return
+            if not self.queue_opened or self.queue_opened[0]!=cid:return
             if not messagebox.askyesno('Confirm unavailable','Did WhatsApp explicitly indicate this number cannot be contacted? Do not use this for connection errors.'):return
             row=self.s.get(cid);self.s.update(cid,row['status'],'Unavailable',row['consent'],row['notes'])
-        self.queue_skipped.add(cid);self.queue_current=None;self.opened=None
+        self.queue_skipped.add(cid);self.queue_current=None;self.queue_opened=None
         self.refresh();self.queue_next()
     def select(self,_=None):
         selection=self.tree.selection()
@@ -257,6 +260,12 @@ def main():
         assert normalize('0221234567')[1] == 'Landline / other Egypt'
         assert store.import_rows([{'name':'Test','phone':'01012345678'},{'name':'Duplicate','phone':'+201012345678'},{'name':'Landline','phone':'0221234567'}]) == (2,1,0)
         app.refresh();root.update();assert len(app.tree.get_children()) == 1
+        row=store.all()[0];store.update(row['id'],'New','Unknown','Self-test permission','')
+        app.campaign_text.delete('1.0','end');app.campaign_text.insert('1.0','Test message for {business}')
+        app.prepare_queue();assert app.queue_current==row['id'] and len(app.queue_ids)==1
+        assert app.queue_message(store.get(row['id']))=='Test message for Test'
+        app.queue_skip(False);assert app.queue_current is None and len(app.queue_skipped)==1
+        assert not store.get(row['id'])['sent']
         root.destroy();store.db.close()
         print('PASS: Tkinter, GUI initialization, SQLite, mobile filtering and deduplication.',flush=True)
         return
