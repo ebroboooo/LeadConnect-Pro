@@ -13,7 +13,7 @@ TEMPLATE = ('مساء الخير يا فندم، مع حضرتك [اسمك]، م
 
 class App:
     def __init__(self,root,store):
-        self.root=root; self.s=store; self.selected=None; self.opened=None
+        self.root=root; self.s=store; self.selected=None; self.opened=None; self.queue_ids=[]; self.queue_done=set(); self.queue_skipped=set(); self.queue_current=None; self.queue_template=""
         root.title('LeadConnect Pro | Local Sales Workspace'); root.geometry('1350x850'); root.minsize(1000,650); root.configure(bg='#101827')
         style=ttk.Style(root); style.theme_use('clam')
         style.configure('.',background='#101827',foreground='#e2e8f0',font=('Segoe UI',10))
@@ -38,7 +38,8 @@ class App:
         self.kpi=ttk.Label(header,text='',font=('Segoe UI',12,'bold'));self.kpi.pack(anchor='w',pady=(12,0))
         tabs=ttk.Notebook(root);tabs.pack(fill='both',expand=True,padx=18,pady=(0,12))
         self.contacts=ttk.Frame(tabs,padding=12); self.replies=ttk.Frame(tabs,padding=20)
-        tabs.add(self.contacts,text='01  Prospects & outreach');tabs.add(self.replies,text='02  Reply matching')
+        self.campaign=ttk.Frame(tabs,padding=20)
+        tabs.add(self.campaign,text='01  Campaign desk');tabs.add(self.contacts,text='02  Prospects');tabs.add(self.replies,text='03  Reply matching')
         tools=ttk.Frame(self.contacts);tools.pack(fill='x')
         ttk.Button(tools,text='Import CSV / Excel / JSON',command=self.import_file,style='Accent.TButton').pack(side='left')
         ttk.Button(tools,text='Paste phone numbers',command=self.paste).pack(side='left',padx=5)
@@ -77,11 +78,34 @@ class App:
         ttk.Button(self.replies,text='Match sender & log reply',command=self.reply,style='Accent.TButton').pack(anchor='w')
         self.replyresult=ttk.Label(self.replies,text='',wraplength=850,font=('Segoe UI',12,'bold'));self.replyresult.pack(anchor='w',pady=15)
         ttk.Label(self.replies,text='Automatic inbox monitoring is not enabled. Use WhatsApp notifications; this screen records replies you explicitly enter.',wraplength=850,foreground='#94a3b8').pack(anchor='w')
+        ttk.Label(self.campaign,text='Campaign execution desk',font=('Segoe UI',20,'bold')).pack(anchor='w')
+        ttk.Label(self.campaign,text='Import → filter → prepare → review each chat → confirm outcome. Only recipients with recorded permission enter the queue.',wraplength=1000).pack(anchor='w',pady=(5,12))
+        bar=ttk.Frame(self.campaign);bar.pack(fill='x')
+        ttk.Button(bar,text='Import MapHarvest CSV / Excel',command=self.import_file,style='Accent.TButton').pack(side='left')
+        ttk.Button(bar,text='Paste numbers',command=self.paste).pack(side='left',padx=8)
+        ttk.Button(bar,text='Open WhatsApp Web',command=lambda:webbrowser.open('https://web.whatsapp.com/')).pack(side='left')
+        self.queue_counts=ttk.Label(self.campaign,text='',font=('Segoe UI',12,'bold'));self.queue_counts.pack(anchor='w',pady=12)
+        ttk.Label(self.campaign,text='Campaign message — personalize with {business} and {area}').pack(anchor='w')
+        self.campaign_text=tk.Text(self.campaign,height=6,wrap='word',bg='#eaf0f6',fg='#142337',font=('Segoe UI',11));self.campaign_text.pack(fill='x');self.campaign_text.insert('1.0',TEMPLATE)
+        controls=ttk.Frame(self.campaign);controls.pack(fill='x',pady=10)
+        ttk.Button(controls,text='Prepare eligible queue',command=self.prepare_queue,style='Accent.TButton').pack(side='left')
+        ttk.Button(controls,text='Review next recipient',command=self.queue_next).pack(side='left',padx=8)
+        self.queue_progress=ttk.Progressbar(self.campaign,mode='determinate',maximum=100);self.queue_progress.pack(fill='x')
+        self.queue_label=ttk.Label(self.campaign,text='No campaign prepared.',wraplength=1000);self.queue_label.pack(anchor='w',pady=8)
+        self.queue_preview=tk.Text(self.campaign,height=5,wrap='word',bg='#172338',fg='#e2e8f0',font=('Segoe UI',11),state='disabled');self.queue_preview.pack(fill='x')
+        actions=ttk.Frame(self.campaign);actions.pack(fill='x',pady=8)
+        self.queue_open_button=ttk.Button(actions,text='Open reviewed WhatsApp chat',command=self.queue_open,style='Accent.TButton',state='disabled');self.queue_open_button.pack(side='left')
+        self.queue_sent_button=ttk.Button(actions,text='Confirm sent & advance',command=self.queue_sent,state='disabled');self.queue_sent_button.pack(side='left',padx=8)
+        self.queue_skip_button=ttk.Button(actions,text='Skip & advance',command=lambda:self.queue_skip(False),state='disabled');self.queue_skip_button.pack(side='left')
+        self.queue_invalid_button=ttk.Button(actions,text='WhatsApp unavailable',command=lambda:self.queue_skip(True),state='disabled');self.queue_invalid_button.pack(side='left',padx=8)
+        ttk.Label(self.campaign,text='Sending happens inside WhatsApp. The app never treats opening a chat as a sent message. The queue is session-only; confirmed sends and exclusions persist.',wraplength=1000,foreground='#94a3b8').pack(anchor='w',pady=8)
         self.footer=ttk.Label(root,text='Local storage only.  |  Public listing ≠ WhatsApp permission.',foreground='#8fcac6');self.footer.pack(anchor='w',padx=20,pady=(0,10))
         self.filter.trace_add('write',lambda *_:self.refresh());self.search.trace_add('write',lambda *_:self.refresh())
         self.refresh()
     def refresh(self):
         rows=self.s.all()
+        if hasattr(self,'queue_counts'):
+            self.queue_counts.config(text=f"{len(rows)} records  |  {sum(r['kind']=='Egypt mobile' for r in rows)} valid mobiles  |  {sum(r['kind']!='Egypt mobile' for r in rows)} excluded / review  |  {sum(eligible(r) and not r['sent'] for r in rows)} eligible unsent  |  {sum(r['kind']=='Egypt mobile' and not r['consent'].strip() and not r['sent'] for r in rows)} permission needed")
         self.kpi.config(text=f"{len(rows)} imported  |  {sum(r['kind']=='Egypt mobile' for r in rows)} mobile  |  {sum(r['kind']!='Egypt mobile' for r in rows)} excluded / review  |  {sum(eligible(r) and not r['sent'] for r in rows)} ready  |  {sum(bool(r['sent']) for r in rows)} sent (recorded)  |  {sum(bool(r['replied']) for r in rows)} replies")
         self.tree.delete(*self.tree.get_children());mode=self.filter.get();q=self.search.get().strip().lower()
         for r in rows:
@@ -96,6 +120,72 @@ class App:
         else:
             self.selected=None;self.title.config(text='Select a prospect');self.info.config(text='Select a visible contact to review its details.')
             self.status.set('New');self.verify.set('Unknown');self.consent.set('');self.notes.set('')
+    def prepare_queue(self):
+        template=self.campaign_text.get('1.0','end').strip()
+        if not template or '[اسمك]' in template or len(template)>1500:
+            messagebox.showwarning('Campaign template','Enter your name and a non-empty message (maximum 1,500 characters).');return
+        if self.queue_current is not None:
+            messagebox.showwarning('Review pending','Confirm or skip the currently reviewed recipient first.');return
+        self.queue_template=template
+        self.queue_ids=[r['id'] for r in self.s.all() if eligible(r) and not r['sent'] and r['status']=='New']
+        self.queue_done=set();self.queue_skipped=set()
+        self.queue_next()
+    def queue_next(self):
+        if self.queue_current is not None:return
+        for cid in self.queue_ids:
+            if cid in self.queue_done or cid in self.queue_skipped:continue
+            row=self.s.get(cid)
+            if not eligible(row) or row['sent'] or row['status']!='New':
+                self.queue_skipped.add(cid);continue
+            self.queue_current=cid
+            break
+        self.queue_render()
+    def queue_render(self):
+        total=len(self.queue_ids);completed=len(self.queue_done)+len(self.queue_skipped)
+        self.queue_progress['value']=100*completed/max(1,total)
+        row=self.s.get(self.queue_current) if self.queue_current is not None else None
+        label=f'{completed}/{total} reviewed  |  {len(self.queue_done)} sent (manual confirmation)  |  {len(self.queue_skipped)} skipped'
+        if row:label+=f"  |  Next: {row['name']} (+{row['phone']})"
+        elif not total:label+='  |  No eligible recipients. Record permission in Prospects first.'
+        else:label+='  |  Queue complete.'
+        self.queue_label.config(text=label)
+        self.queue_preview.config(state='normal');self.queue_preview.delete('1.0','end')
+        if row:self.queue_preview.insert('1.0',self.queue_message(row))
+        self.queue_preview.config(state='disabled')
+        self.queue_open_button.config(state='normal' if row else 'disabled')
+        self.queue_skip_button.config(state='normal' if row else 'disabled')
+        self.queue_invalid_button.config(state='normal' if row and self.opened and self.opened[0]==row['id'] else 'disabled')
+        self.queue_sent_button.config(state='normal' if row and self.opened and self.opened[0]==row['id'] else 'disabled')
+    def queue_message(self,row):
+        return self.queue_template.replace('{business}',row['name']).replace('{area}',row['area'])
+    def queue_open(self):
+        row=self.s.get(self.queue_current)
+        if not eligible(row) or row['sent'] or row['status']!='New':
+            messagebox.showwarning('Not eligible','This recipient is no longer eligible. Skip to continue.');return
+        text=self.queue_message(row)
+        if not text or len(text)>1500:
+            messagebox.showwarning('Message','Personalized message exceeds 1,500 characters. Skip or change the template.');return
+        if webbrowser.open('https://web.whatsapp.com/send?'+urlencode({'phone':row['phone'],'text':text})):
+            self.opened=(row['id'],text);self.queue_render()
+            self.footer.config(text='Review the recipient in WhatsApp and press Send yourself.')
+        else:messagebox.showerror('Browser','Unable to open WhatsApp Web.')
+    def queue_sent(self):
+        cid=self.queue_current
+        if cid is None or not self.opened or self.opened[0]!=cid:return
+        if not messagebox.askyesno('Confirm actual send','Did you press Send and see the outgoing message in the correct WhatsApp chat?'):return
+        try:self.s.event(cid,'Sent',self.opened[1])
+        except ValueError as e:messagebox.showerror('Could not record',str(e));return
+        self.queue_done.add(cid);self.queue_current=None;self.opened=None
+        self.refresh();self.queue_next()
+    def queue_skip(self,unavailable):
+        cid=self.queue_current
+        if cid is None:return
+        if unavailable:
+            if not self.opened or self.opened[0]!=cid:return
+            if not messagebox.askyesno('Confirm unavailable','Did WhatsApp explicitly indicate this number cannot be contacted? Do not use this for connection errors.'):return
+            row=self.s.get(cid);self.s.update(cid,row['status'],'Unavailable',row['consent'],row['notes'])
+        self.queue_skipped.add(cid);self.queue_current=None;self.opened=None
+        self.refresh();self.queue_next()
     def select(self,_=None):
         selection=self.tree.selection()
         if not selection:return
