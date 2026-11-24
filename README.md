@@ -17,7 +17,7 @@ If `python` is not recognized, try `py -3` instead. The self-test checks the GUI
 
 ## Workflow
 
-Import MapHarvest CSV, JSON, XLSX (first numbered worksheet, headers in row 1), or paste numbers. The Egyptian mobile filter excludes landlines and other formats from the default view; a valid mobile format is not proof of WhatsApp registration. Verify each listing and record recipient permission. Edit the message template, review an individual recipient, open WhatsApp and send manually. Confirm sent only after actually sending. Match incoming replies manually using the sender number; unrelated conversations are not recorded.
+Import MapHarvest CSV, JSON, XLSX (first numbered worksheet, headers in row 1), or paste numbers. The Egyptian mobile filter excludes landlines and other formats from the default view; a valid mobile format is not proof of WhatsApp registration. Verify each listing and record recipient permission. In Prospects, record permission and save each eligible contact. In Campaign desk, edit the template, prepare the eligible queue, open the reviewed recipient in WhatsApp Web, and send manually. Confirm sent to advance to the next preview, or skip; mark unavailable only when WhatsApp explicitly reports it. The queue is session-only, and actual recorded sends and exclusions persist. Confirm sent only after actually sending. Match incoming replies manually using the sender number; unrelated conversations are not recorded.
 
 No automatic bulk messaging, account probing or inbox monitoring is provided. Use normal WhatsApp notifications. Official integration is necessary for reliable automated reply detection.
 
